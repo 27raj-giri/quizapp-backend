@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 from dotenv import load_dotenv
@@ -7,6 +7,7 @@ import os
 import json
 import random
 import string
+import hashlib
 
 load_dotenv()
 
@@ -29,9 +30,102 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 def generate_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
 @app.get("/")
 def hello():
     return {"message": "Backend Working!"}
+
+@app.post("/signup")
+async def signup(data: dict):
+    try:
+        existing = supabase.table("profiles").select("*").eq("email", data['email']).execute()
+        if existing.data:
+            raise HTTPException(status_code=400, detail="Email already registered!")
+        
+        result = supabase.table("profiles").insert({
+            "name": data['name'],
+            "email": data['email'],
+            "password": hash_password(data['password']),
+            "college": data['college'],
+            "state": data['state'],
+            "university": data['university'],
+            "stream": data['stream'],
+            "year": data['year'],
+        }).execute()
+        
+        profile = result.data[0]
+        profile.pop('password', None)
+        return {"status": "success", "profile": profile}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/login")
+async def login(data: dict):
+    try:
+        result = supabase.table("profiles").select("*").eq("email", data['email']).execute()
+        if not result.data:
+            raise HTTPException(status_code=400, detail="Email not found!")
+        
+        profile = result.data[0]
+        if profile['password'] != hash_password(data['password']):
+            raise HTTPException(status_code=400, detail="Wrong password!")
+        
+        profile.pop('password', None)
+        return {"status": "success", "profile": profile}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/profile/{profile_id}")
+async def get_profile(profile_id: str):
+    profile = supabase.table("profiles").select("*").eq("id", profile_id).execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Profile not found!")
+    
+    attempts = supabase.table("attempts").select("*").eq("profile_id", profile_id).order("created_at", desc=True).execute()
+    
+    p = profile.data[0]
+    p.pop('password', None)
+    
+    return {
+        "profile": p,
+        "attempts": attempts.data
+    }
+
+@app.get("/leaderboard")
+async def leaderboard():
+    attempts = supabase.table("attempts").select("*").execute()
+    
+    scores = {}
+    for attempt in attempts.data:
+        pid = attempt.get('profile_id')
+        if not pid:
+            continue
+        if pid not in scores:
+            scores[pid] = {
+                "profile_id": pid,
+                "name": attempt.get('student_name'),
+                "total_score": 0,
+                "total_questions": 0,
+                "attempts": 0
+            }
+        scores[pid]['total_score'] += attempt.get('score', 0)
+        scores[pid]['total_questions'] += attempt.get('total', 0)
+        scores[pid]['attempts'] += 1
+    
+    leaderboard = []
+    for pid, data in scores.items():
+        if data['total_questions'] > 0:
+            data['percentage'] = round((data['total_score'] / data['total_questions']) * 100)
+            leaderboard.append(data)
+    
+    leaderboard.sort(key=lambda x: x['percentage'], reverse=True)
+    return {"leaderboard": leaderboard[:20]}
 
 @app.post("/generate-student-quiz")
 async def generate_student_quiz(data: dict):
@@ -77,7 +171,6 @@ Format:
             text = text[4:]
 
     questions = json.loads(text.strip())
-
     code = generate_code()
 
     supabase.table("quizzes").insert({
@@ -100,15 +193,16 @@ async def get_quiz_by_code(code: str):
 async def save_attempt(data: dict):
     supabase.table("attempts").insert({
         "student_name": data['student_name'],
-        "age": data['age'],
-        "state": data['state'],
-        "university": data['university'],
-        "college": data['college'],
-        "year": data['year'],
-        "stream": data['stream'],
-        "subject": data['subject'],
+        "age": data.get('age'),
+        "state": data.get('state'),
+        "university": data.get('university'),
+        "college": data.get('college'),
+        "year": data.get('year'),
+        "stream": data.get('stream'),
+        "subject": data.get('subject'),
         "score": data['score'],
-        "total": data['total']
+        "total": data['total'],
+        "profile_id": data.get('profile_id')
     }).execute()
     return {"status": "saved"}
 
