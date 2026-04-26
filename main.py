@@ -230,3 +230,40 @@ async def teacher_dashboard(code: str):
         "quiz": quiz.data[0],
         "attempts": attempts.data
     }
+
+@app.post("/generate-adaptive-quiz")
+async def generate_adaptive_quiz(data: dict):
+    difficulty = data.get('difficulty', 'medium')
+    subject = data['subject']
+    university = data['university']
+    stream = data['stream']
+    year = data['year']
+    count = data.get('count', 2)
+    
+    prompt = f"""Generate exactly {count} MCQ questions for {subject} subject.
+University: {university}, Stream: {stream}, Year: {year}
+Difficulty: {difficulty}
+
+For {difficulty} difficulty:
+- easy: Basic definitions, simple concepts, straightforward questions
+- medium: Application based, moderate complexity
+- hard: Advanced concepts, tricky questions, edge cases, complex analysis
+
+Return ONLY a JSON array. No extra text. No markdown. No backticks.
+IMPORTANT: The "correct" field must be the FULL option text, not A/B/C/D.
+Format:
+[{{"question":"q","options":["Full option A","Full option B","Full option C","Full option D"],"correct":"Full option A","explanation":"reason","difficulty":"{difficulty}"}}]"""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    text = response.choices[0].message.content.strip()
+
+    if "```" in text:
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+
+    questions = json.loads(text.strip())
+    return {"questions": questions, "difficulty": difficulty}
