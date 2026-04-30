@@ -239,15 +239,24 @@ async def generate_adaptive_quiz(data: dict):
     stream = data['stream']
     year = data['year']
     count = data.get('count', 2)
+    previous_questions = data.get('previous_questions', [])
     
+    prev_text = ""
+    if previous_questions:
+        prev_text = f"\nDO NOT repeat these questions: {', '.join(previous_questions[:10])}"
+    
+    if difficulty == "easy":
+        diff_instruction = "Generate EASY questions only. Basic definitions, simple recall, straightforward facts. A student who just read the chapter once should answer correctly."
+    elif difficulty == "hard":
+        diff_instruction = "Generate HARD questions only. Complex analysis, tricky edge cases, advanced applications, questions that require deep understanding. Most students should struggle with these."
+    else:
+        diff_instruction = "Generate MEDIUM questions only. Application based, moderate complexity, requires understanding not just memorization."
+
     prompt = f"""Generate exactly {count} MCQ questions for {subject} subject.
 University: {university}, Stream: {stream}, Year: {year}
-Difficulty: {difficulty}
 
-For {difficulty} difficulty:
-- easy: Basic definitions, simple concepts, straightforward questions
-- medium: Application based, moderate complexity
-- hard: Advanced concepts, tricky questions, edge cases, complex analysis
+{diff_instruction}
+{prev_text}
 
 Return ONLY a JSON array. No extra text. No markdown. No backticks.
 IMPORTANT: The "correct" field must be the FULL option text, not A/B/C/D.
